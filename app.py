@@ -34,6 +34,9 @@ haiku = "claude-3-haiku-20240307"
 sonnet = "claude-3-sonnet-20240229"
 
 
+openai_api_key = os.getenv("OPENAI_API_KEY")
+
+
 companyList=["Aadhar Housing Finance"]
 input_sector="Finance service commercial"
 pdfList=["./AadharHousingFinanceAnnualReport.pdf"]
