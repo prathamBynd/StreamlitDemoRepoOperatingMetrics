@@ -1,7 +1,6 @@
 import streamlit as st 
 from streamlit_pdf_viewer import pdf_viewer
 
-from unstructured.partition.pdf import partition_pdf
 import PyPDF2
 from PyPDF2 import PdfReader, PdfWriter
 import anthropic
@@ -343,35 +342,7 @@ def main():
             input_company_pickle_filename = f"./{input_company}.pkl"
 
             if not os.path.exists(input_company_pickle_filename):
-                for pageNo, j in enumerate(sorted(os.listdir("./splitPDF"), key=numerical_sort)):
-                    try:
-                        pdf_elements_temp = partition_pdf(
-                            f"./splitPDF/{j}",
-                            strategy="hi_res",
-                            chunking_strategy="by_title",
-                            extract_images_in_pdf=True,
-                            extract_image_block_types=["Image"],
-                            extract_image_block_output_dir=f"./images/{pageNo+1}",
-                            infer_table_structure=True,
-                            max_characters=3000,
-                            new_after_n_chars=2800,
-                            combine_text_under_n_chars=2000
-                        )
-
-                    except Exception as e:
-                        print(f"Error processing page {pageNo + 1}: {e}")
-                        continue
-
-                    for element in pdf_elements_temp:
-                        try:
-                            element.metadata.orig_elements[0].metadata.page_number = pageNo + 1
-                        except AttributeError as e:
-                            print(f"Error setting page number for element: {e}")
-                            continue
-
-                    pdf_elements+=pdf_elements_temp
-
-                save_to_pkl(pdf_elements,input_company_pickle_filename)
+                continue
 
             else:
                 pdf_elements = load_from_pkl(input_company_pickle_filename)
