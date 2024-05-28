@@ -28,17 +28,10 @@ load_dotenv()
 
 anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")
 
-client=anthropic.Anthropic()
+client=anthropic.Anthropic(api_key=anthropic_api_key)
 
 haiku = "claude-3-haiku-20240307"
 sonnet = "claude-3-sonnet-20240229"
-
-
-openai_api_key = os.getenv("OPENAI_API_KEY")
-
-
-os.environ["EXTRACT_IMAGE_BLOCK_CROP_HORIZONTAL_PAD"]='20'
-os.environ["EXTRACT_IMAGE_BLOCK_CROP_VERTICAL_PAD"]='80'
 
 
 companyList=["Aadhar Housing Finance"]
