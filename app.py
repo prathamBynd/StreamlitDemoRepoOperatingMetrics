@@ -223,6 +223,8 @@ def finalInferenceTables(input_metric, input_company, input_year, description, i
                         Give me numerical information about the METRIC for the company mentioned in the year {input_year} on the basis of the given images of tables from the company's annual report.
                         
                         Only give me the numeric information about what is asked and do not return any extra text or information in your response. Give preference to concrete numbers rather than percentages. Make sure your answer is a value that is mentioned in one of the tables and also includes the complete unit and denomination of the value.
+
+                        If the answer is not present in the images, do not make any assumptions or guesses and return 'METRIC NOT PRESENT' in your reponse. 
                         
                         Answer in the following JSON schema-
                         
