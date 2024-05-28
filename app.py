@@ -429,14 +429,15 @@ def main():
                 finalAns = response.get("Response")
                 print(finalAns)
 
-                pages=list(pages)
-                pages.sort()
-                print(pages)
-                sourcePage = pages[int(remove_currency(str(response.get("Image Number"))))-1]
-                print(f"Source Page: {sourcePage}")
-                text_to_highlight=add_commas(remove_currency(finalAns))
-                print(text_to_highlight)
-                highlight_text(input_pdf, sourcePage, pages, text_to_highlight)
+                if 'not' not in finalAns.lower():
+                    pages=list(pages)
+                    pages.sort()
+                    print(pages)
+                    sourcePage = pages[int(remove_currency(str(response.get("Image Number"))))-1]
+                    print(f"Source Page: {sourcePage}")
+                    text_to_highlight=add_commas(remove_currency(finalAns))
+                    print(text_to_highlight)
+                    highlight_text(input_pdf, sourcePage, pages, text_to_highlight)
                 
                 source="table"
 
@@ -448,8 +449,11 @@ def main():
             if os.path.exists("./jpegs"):
                 shutil.rmtree("./jpegs")
 
-        st.write(finalAns)
-        pdf_viewer("./highlighted_pdf.pdf")
+        if 'not' not in finalAns.lower():
+            st.write(finalAns)
+            pdf_viewer("./highlighted_pdf.pdf")
+        else:
+            st.write("Metric not present in the report.")
 
 if __name__ == "__main__":
     main()
