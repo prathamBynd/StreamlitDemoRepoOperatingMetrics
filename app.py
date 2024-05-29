@@ -23,6 +23,8 @@ from llama_index.core.schema import TextNode
 from pinecone import Pinecone, ServerlessSpec
 from llama_index.vector_stores.pinecone import PineconeVectorStore
 
+from openai import OpenAI
+
 from dotenv import load_dotenv
 
 
@@ -35,6 +37,8 @@ haiku = "claude-3-haiku-20240307"
 sonnet = "claude-3-sonnet-20240229"
 
 openai_api_key = os.getenv("OPENAI_API_KEY")
+oclient=OpenAI(api_key=openai_api_key)
+
 pinecone_api_key=os.getenv("PINECONE_API_KEY")
 
 
@@ -201,15 +205,16 @@ def finalInferenceTables(input_metric, input_company, input_year, description, i
             "text": f"Image {index+1}:"
         })
         image_blocks.append({
-            "type": "image",
-            "source": {
+            "type": "image_url",
+            "image_url": {
                 "type": "base64",
-                "media_type": "image/jpeg",
-                "data": encode_image(image_path),
+                "url": f"data:image/jpeg;base64,{encode_image(image_path)}",
             }
         })
 
-    messages = [
+    response=oclient.chat.completions.create(
+        model="gpt-4o",
+        messages = [
             {
                 "role": "user",
                 "content": image_blocks + [
@@ -233,14 +238,14 @@ def finalInferenceTables(input_metric, input_company, input_year, description, i
                             "Response": "",
                             "Image Number": "Image number from which answer was obtained. (e.g, 1, 2 or 3)"
                         }}'''
-                    }
+                    },
                 ],
             }
-        ]
+        ],
+            max_tokens=300
+    )
 
-    operatingMetric=get_response_sonnet(messages)
-
-    return operatingMetric
+    return response.choices[0].message.content
 
 
 def remove_currency(text):
@@ -349,7 +354,6 @@ def main():
 
             texts_elements, texts, tables, tables_text = categorize_elements(pdf_elements)
 
-
             Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-large", api_key=openai_api_key)
 
             pc = Pinecone(api_key=pinecone_api_key)
@@ -363,6 +367,7 @@ def main():
 
             if os.path.exists("./tableStorage") and os.path.exists("./tablePage_to_uuid.pkl"):
                 if not is_variable_defined('tableIndex'):
+
                     storage_context_tables = StorageContext.from_defaults(persist_dir="./tableStorage", vector_store=vector_store_tables)
                     tableIndex = load_index_from_storage(storage_context_tables)
 
@@ -377,8 +382,6 @@ def main():
             else:
                 tableNodes = []
                 tablePage_to_uuid = {}
-
-                
 
                 pc.create_index(
                     name="tables",
@@ -435,13 +438,16 @@ def main():
                 
                 retriever = VectorIndexRetriever(index=tableIndex, similarity_top_k=10, sparse_top_k=7, query_mode="hybrid")
 
+                print("started")
                 retrievedNodes = retriever.retrieve(f"{input_metric}")
+                print("end")
 
                 pages = {tablePage_to_uuid[node.node.id_] for node in retrievedNodes if node.node.id_ in tablePage_to_uuid}
                 pdf_to_images(input_pdf, pages)
 
 
                 description=metricDescription(input_metric, input_company)
+                print(f"Description: {description}")
 
                 response=finalInferenceTables(input_metric, input_company, input_year, description)
                 while True:
