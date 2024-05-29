@@ -20,6 +20,9 @@ from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.schema import TextNode
 
+from pinecone import Pinecone, ServerlessSpec
+from llama_index.vector_stores.pinecone import PineconeVectorStore
+
 from dotenv import load_dotenv
 
 
@@ -27,14 +30,12 @@ load_dotenv()
 
 
 anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")
-
 client=anthropic.Anthropic(api_key=anthropic_api_key)
-
 haiku = "claude-3-haiku-20240307"
 sonnet = "claude-3-sonnet-20240229"
 
-
 openai_api_key = os.getenv("OPENAI_API_KEY")
+pinecone_api_key=os.getenv("PINECONE_API_KEY")
 
 
 companyList=["Aadhar Housing Finance"]
@@ -349,25 +350,47 @@ def main():
             texts_elements, texts, tables, tables_text = categorize_elements(pdf_elements)
 
 
-            Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-large")
+            Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-large", api_key=openai_api_key)
+
+            pc = Pinecone(api_key=pinecone_api_key)
+
+            pinecone_index_tables = pc.Index("tables")
+            vector_store_tables = PineconeVectorStore(
+                pinecone_index=pinecone_index_tables,
+                add_sparse_vector=True,
+            )
 
 
-            if os.path.exists("./tableStorage") and os.path.exists("./textStorage") and  os.path.exists("./tablePage_to_uuid.pkl") and os.path.exists("./textPage_to_uuid.pkl"):
+            if os.path.exists("./tableStorage") and os.path.exists("./tablePage_to_uuid.pkl"):
                 if not is_variable_defined('tableIndex'):
-                    storage_context_tables = StorageContext.from_defaults(persist_dir="./tableStorage")
+                    storage_context_tables = StorageContext.from_defaults(persist_dir="./tableStorage", vector_store=vector_store_tables)
                     tableIndex = load_index_from_storage(storage_context_tables)
 
-                if not is_variable_defined('textIndex'):
-                    storage_context_text = StorageContext.from_defaults(persist_dir="./textStorage")
-                    textIndex = load_index_from_storage(storage_context_text)
+                # if not is_variable_defined('textIndex'):
+                #     storage_context_text = StorageContext.from_defaults(persist_dir="./textStorage")
+                #     textIndex = load_index_from_storage(storage_context_text)
 
                 tablePage_to_uuid=load_from_pkl("./tablePage_to_uuid.pkl")
-                textPage_to_uuid=load_from_pkl("./textPage_to_uuid.pkl")
+                # textPage_to_uuid=load_from_pkl("./textPage_to_uuid.pkl")
 
 
             else:
                 tableNodes = []
                 tablePage_to_uuid = {}
+
+                
+
+                pc.create_index(
+                    name="tables",
+                    dimension=3072,
+                    metric="dotproduct",
+                    spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+                )
+                pinecone_index_tables = pc.Index("tables")
+                vector_store_tables = PineconeVectorStore(
+                    pinecone_index=pinecone_index_tables,
+                    add_sparse_vector=True,
+                )
                 
                 for index, i in enumerate(tables_text):
                     if len(i) > 0:
@@ -376,21 +399,23 @@ def main():
                         tableNodes.append(TextNode(text=i, id_=node_id))
                 
                 save_to_pkl(tablePage_to_uuid, "./tablePage_to_uuid.pkl")
-                tableIndex = VectorStoreIndex(tableNodes)
+                storage_context_tables = StorageContext.from_defaults(vector_store=vector_store_tables)
+                tableIndex = VectorStoreIndex(tableNodes, storage_context=storage_context_tables)
                 tableIndex.storage_context.persist(persist_dir="./tableStorage")
                 
 
-                textNodes=[]
-                textPage_to_uuid = {}
-                for index, i in enumerate(texts):
-                    if len(i)>0:
-                        node_id = generate_uuid()
-                        textPage_to_uuid[node_id]=texts_elements[index].metadata.orig_elements[0].metadata.page_number
-                        textNodes.append(TextNode(text=i, id_=node_id))
+                # textNodes=[]
+                # textPage_to_uuid = {}
+                # for index, i in enumerate(texts):
+                #     if len(i)>0:
+                #         node_id = generate_uuid()
+                #         textPage_to_uuid[node_id]=texts_elements[index].metadata.orig_elements[0].metadata.page_number
+                #         textNodes.append(TextNode(text=i, id_=node_id))
                         
-                save_to_pkl(textPage_to_uuid,"./textPage_to_uuid.pkl")
-                textIndex=VectorStoreIndex(textNodes)
-                textIndex.storage_context.persist(persist_dir="./textStorage")
+                # save_to_pkl(textPage_to_uuid,"./textPage_to_uuid.pkl")
+                # storage_context_text = StorageContext.from_defaults(vector_store=vector_store_text)
+                # textIndex=VectorStoreIndex(textNodes, storage_context=storage_context_text)
+                # textIndex.storage_context.persist(persist_dir="./textStorage")
             
 
             response=get_type(input_metric,input_company,input_sector)
