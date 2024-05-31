@@ -27,6 +27,8 @@ from openai import OpenAI
 
 from dotenv import load_dotenv
 
+import time
+
 
 load_dotenv()
 
@@ -161,7 +163,7 @@ def pdf_to_images(pdf_path, pagesList):
     for i in pagesList:
         pages = convert_from_path(pdf_path, first_page=i,
         last_page=i,fmt='jpeg', output_file='page', paths_only=True,
-        output_folder="./jpegs", dpi=400)
+        output_folder="./jpegs", dpi=600)
 
 
 def is_variable_defined(var_name):
@@ -169,75 +171,103 @@ def is_variable_defined(var_name):
 
 
 def metricDescription(input_metric, input_company):
-    messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text":  f'''You have been provided a metric and a company name below-
-                        
-                        User Query: {input_metric}
-                        Company: {input_company}
-
-                        Give a short senetence in your response that tells the description for the metric along with some synonyms for it that might be found in the company's annual report instead of the metric itself.
-                        
-                        Only return me the sentence asked for without any extra text or information in your response.'''
-                    }
-                ],
-            }
-        ]
-
-    description=get_response_haiku(messages)
-
-    return description
-
-
-def finalInferenceTables(input_metric, input_company, input_year, description, imageFolder="./jpegs"):
-    imagePaths = [os.path.join(imageFolder, i) for i in os.listdir(imageFolder) if i.endswith('.jpg') or i.endswith('.jpeg')]
-
-    print(imagePaths)
-
-    image_blocks = []
-    for index, image_path in enumerate(imagePaths):
-        image_blocks.append({
-            "type": "text",
-            "text": f"Image {index+1}:"
-        })
-        image_blocks.append({
-            "type": "image_url",
-            "image_url": {
-                "type": "base64",
-                "url": f"data:image/jpeg;base64,{encode_image(image_path)}",
-            }
-        })
-
     response=oclient.chat.completions.create(
         model="gpt-4o",
         messages = [
             {
                 "role": "user",
-                "content": image_blocks + [
+                "content": [
+                    {
+                        "type": "text",
+                        "text":  f'''Give me a concise but useful explanation of the following metric - "{input_metric}". Include some common ways in which this might be mentioned as well. This description is going to be used to search for the metric in an annual report for "{input_company}" company.
+                        
+Give me the output in JSON format with following fields - 
+{{
+metric_description: "Description",
+common_mentions: "list of common mentions",
+search_instruction_string: "list of search instruction strings"
+}}'''
+                    },
+                ],
+            }
+        ],
+            max_tokens=300
+    )
+
+    return response.choices[0].message.content
+
+
+def filterChunks(input_metric, input_company, input_year, description, image_path):
+    response=oclient.chat.completions.create(
+        model="gpt-4o",
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url":  {
+                            "type": "base64",
+                            "url": f"data:image/jpeg;base64,{encode_image(image_path)}",
+                        }
+                    },
                     {
                         "type": "text",
                         "text":  f'''You have been provided a METRIC, Description of METRIC and a COMPANY name below-
                         
-                        METRIC: {input_metric}
-                        Description of METRIC: {description}
-                        COMPANY: {input_company}
-                        
-                        Give me numerical information about the METRIC for the company mentioned in the year {input_year} on the basis of the given images of tables from the company's annual report.
-                        
-                        Only give me the numeric information about what is asked and do not return any extra text or information in your response. Give preference to concrete numbers rather than percentages. Make sure your answer is a value that is mentioned in one of the tables and also includes the complete unit and denomination of the value.
+METRIC: {input_metric}
+Description of METRIC: {description}
+COMPANY: {input_company}
 
-                        If the answer is not present in the images, do not make any assumptions or guesses and return 'METRIC NOT PRESENT' in your reponse. 
+Give me numerical information about the METRIC for the company mentioned in the year {input_year} on the basis of the given images of tables from the company's annual report along with the Description of METRIC given.
+                    
+Only give me the numeric information about what is asked and do not return any extra text or information in your response. Give preference to concrete numbers rather than percentages. Make sure your answer is a value that is mentioned in one of the tables and also includes the complete unit and denomination of the value.
+
+If the answer is not present in the images, do not make any assumptions or guesses and return 'METRIC NOT PRESENT' in your reponse.
+
+Return your answer as a simple text that looks like JSON without a ```json prefix in the following format-
+
+{{
+"Response": "Numerical value answer or METRIC NOT PRESENT",
+"Reason": "Reason why you thought this number was the answer by mentioning along with the table, column it was present in along with the heading given to the table telling what it is about"
+}}'''
+                    },
+                ],
+            }
+        ],
+            max_tokens=300
+    )
+
+    return response.choices[0].message.content
+
+
+def choose_response(input_metric, input_company, input_year, description, inferences):
+    print(inferences)
+    response=oclient.chat.completions.create(
+        model="gpt-4o",
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text":  f'''A financial analyst has been provided a METRIC, Description of METRIC and a COMPANY name below-
                         
-                        Answer in the following JSON schema-
-                        
-                        {{
-                            "Response": "",
-                            "Image Number": "Image number from which answer was obtained. (e.g, 1, 2 or 3)"
-                        }}'''
+METRIC: {input_metric}
+Description of METRIC: {description}
+COMPANY: {input_company}
+
+The analyst was to go through the COMPANY's annual report and give the numerical value corresponding to the METRIC for the year {input_year} along with the reason why they think the value they chose in the report was the correct one.
+
+Here are a bunch of responses point-wise that the analyst gave consisting of the values they chose along with their reasons-
+
+{inferences}
+
+Return the one you think has the most logical reason and is likely to be the correct one considering the table and column it was present in. Do not have any extra text, information or formatting in your response - just return the exact one you think is the correct one. Do not add ```json prefix, I want normal text that looks like this JSON-
+{{
+    "Response": "The exact response which has the correct answer",
+    "Point Number": "The point number corresponding to that response in the list of responses given above"
+}}'''
                     },
                 ],
             }
@@ -305,6 +335,8 @@ def highlight_text(pdf_path, page_number, pages, text_to_highlight):
         if len(text_instances)==0:
             continue 
 
+        valid_instances = []
+
         for inst in text_instances:
             highlight = page.add_highlight_annot(inst)
 
@@ -324,7 +356,7 @@ def highlight_text(pdf_path, page_number, pages, text_to_highlight):
 
 
 def main():
-    st.title("Aadhar Housing Finance Metric Extractor")
+    st.title("Bynd's Aadhar Housing Finance Metric Extractor")
 
     # Prompt the user to enter a metric
     input_metric = st.text_input("Ask for any metric from AHF's 10-K 2023 Report:")
@@ -340,7 +372,6 @@ def main():
             input_pdf=pdfList[i]
 
 
-            split_pdf(input_pdf)
             pdf_elements=[]
 
             input_company_pickle_filename = f"./{input_company}.pkl"
@@ -353,7 +384,8 @@ def main():
 
 
             texts_elements, texts, tables, tables_text = categorize_elements(pdf_elements)
-
+            
+            start_time = time.time()
             Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-large", api_key=openai_api_key)
 
             pc = Pinecone(api_key=pinecone_api_key)
@@ -363,13 +395,20 @@ def main():
                 pinecone_index=pinecone_index_tables,
                 add_sparse_vector=True,
             )
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"Time to load pinecone: {elapsed_time} seconds")
 
 
             if os.path.exists("./tableStorage") and os.path.exists("./tablePage_to_uuid.pkl"):
                 if not is_variable_defined('tableIndex'):
-
+                    
+                    start_time = time.time()
                     storage_context_tables = StorageContext.from_defaults(persist_dir="./tableStorage", vector_store=vector_store_tables)
                     tableIndex = load_index_from_storage(storage_context_tables)
+                    end_time = time.time()
+                    elapsed_time = end_time - start_time
+                    print(f"Time to load pinecone index: {elapsed_time} seconds")
 
                 # if not is_variable_defined('textIndex'):
                 #     storage_context_text = StorageContext.from_defaults(persist_dir="./textStorage")
@@ -421,6 +460,7 @@ def main():
                 # textIndex.storage_context.persist(persist_dir="./textStorage")
             
 
+            start_time = time.time()
             response=get_type(input_metric,input_company,input_sector)
 
             while True:
@@ -432,59 +472,113 @@ def main():
                     ttype=get_type(input_metric,input_company,input_sector)
 
             ttype=ttype.get('Response')
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"Time to get type: {elapsed_time} seconds")
 
 
             if ttype=='QUANTITATIVE':
-                
+                start_time = time.time()
+                description=metricDescription(input_metric, input_company)
+                end_time = time.time()
+                elapsed_time = end_time - start_time
+                print(f"Time to get description: {elapsed_time} seconds") 
+
+
+                start_time = time.time()
                 retriever = VectorIndexRetriever(index=tableIndex, similarity_top_k=10, sparse_top_k=7, query_mode="hybrid")
 
-                print("started")
                 retrievedNodes = retriever.retrieve(f"{input_metric}")
-                print("end")
+                end_time = time.time()
+                elapsed_time = end_time - start_time
+                print(f"Time to retrieve chunks: {elapsed_time} seconds")
 
+
+                start_time = time.time()
                 pages = {tablePage_to_uuid[node.node.id_] for node in retrievedNodes if node.node.id_ in tablePage_to_uuid}
+                pages=list(pages)
+                pages.sort()
                 pdf_to_images(input_pdf, pages)
+                end_time = time.time()
+                elapsed_time = end_time - start_time
+                print(f"Time to convert chunks to page images: {elapsed_time} seconds")
 
 
-                description=metricDescription(input_metric, input_company)
-                print(f"Description: {description}")
+                inferences=[]
+                responses=[]
+                reasons=[]
+                for i in os.listdir("./jpegs"):
+                    print(i)
+                    image_path=os.path.join("./jpegs", i)
 
-                response=finalInferenceTables(input_metric, input_company, input_year, description)
-                while True:
-                    try:
-                        response = json.loads(response)
-                        break
-                    except json.JSONDecodeError:
-                        print("Error: JSON decoding failed. Retrying...")
-                        response=finalInferenceTables(input_metric, input_company, input_year, description)
-                finalAns = response.get("Response")
-                print(finalAns)
+                    inferencee=filterChunks(input_metric, input_company, input_year, description, image_path)
+                    print(inferencee)
 
-                if 'not' not in finalAns.lower():
-                    pages=list(pages)
-                    pages.sort()
-                    print(pages)
-                    sourcePage = pages[int(remove_currency(str(response.get("Image Number"))))-1]
-                    print(f"Source Page: {sourcePage}")
-                    text_to_highlight=add_commas(remove_currency(finalAns))
-                    print(text_to_highlight)
-                    highlight_text(input_pdf, sourcePage, pages, text_to_highlight)
+                    while True:
+                        try:
+                            inference=json.loads(inferencee)
+                            response=inference.get('Response')
+
+                            if 'not' not in response.lower() and len(response)>0:
+                                reason=inference.get('Reason')
+
+                                inferences.append(inferencee)
+                                responses.append(add_commas(remove_currency(response)))
+                                reasons.append(reason)
+                            else:
+                                inferences.append(" ")
+
+                            break
+                        except json.JSONDecodeError:
+                            print("Error: JSON decoding failed. Retrying...")
+                            inference=filterChunks(input_metric, input_company, input_year, description, image_path)
+
+
+                if len(responses)==0:
+                    st.write("Metric not present in the report.")
+                elif len(set(responses))==1:
+                    finalAns=responses[0]
+
+                    for i in range(len(inferences)):
+                        if inferences[i]!=" ":
+                            highlight_text(input_pdf, pages[i], pages, finalAns)
+                            break
+                else:
+                    inferences_numbered_list = "\n\n".join(f"{i+1}. {inference}" for i, inference in enumerate(inferences) if inference!=" ")
+                    answerr=choose_response(input_metric, input_company, input_year, description, inferences_numbered_list)
+                    print(answerr)
+
+                    while True:
+                        try:
+                            answer=json.loads(answerr)
+
+                            finalAns=answer.get('Response')
+                            highlightText=add_commas(remove_currency(finalAns))
+                            reason=answer.get('Reason')
+                            page_number=pages[int(remove_currency(str(answer.get('Point Number'))))-1]
+                            print(page_number)
+
+                            break
+                        except json.JSONDecodeError:
+                            print("Error: JSON decoding failed. Retrying...")
+                            answer=choose_response(input_metric, input_company, input_year, description, inferences_numbered_list)
+
+                    print(highlightText)
+                    highlight_text(input_pdf, page_number, pages, highlightText)
                 
                 source="table"
 
 
 
-            results.append(finalAns)
-
 
             if os.path.exists("./jpegs"):
                 shutil.rmtree("./jpegs")
+            if os.path.exists("./highlighted_pdf.pdf"):
+                shutil.rmtree("./highlighted_pdf.pdf")
 
-        if 'not' not in finalAns.lower():
-            st.write(finalAns)
-            pdf_viewer("./highlighted_pdf.pdf")
-        else:
-            st.write("Metric not present in the report.")
+            if len(responses)>0:
+                st.write(finalAns)
+                pdf_viewer("./highlighted_pdf.pdf")
 
 if __name__ == "__main__":
     main()
