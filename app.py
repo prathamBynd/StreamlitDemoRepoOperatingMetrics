@@ -577,7 +577,7 @@ def main():
             if os.path.exists("./jpegs"):
                 shutil.rmtree("./jpegs")
             if os.path.exists("./highlighted_pdf.pdf"):
-                shutil.rmtree("./highlighted_pdf.pdf")
+                os.remove("./highlighted_pdf.pdf")
 
 if __name__ == "__main__":
     main()
