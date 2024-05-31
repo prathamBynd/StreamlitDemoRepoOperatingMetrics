@@ -569,16 +569,15 @@ def main():
                 source="table"
 
 
-
+            if len(responses)>0:
+                st.write(finalAns)
+                if os.path.exists("./highlighted_pdf.pdf"):
+                    pdf_viewer("./highlighted_pdf.pdf")
 
             if os.path.exists("./jpegs"):
                 shutil.rmtree("./jpegs")
             if os.path.exists("./highlighted_pdf.pdf"):
                 shutil.rmtree("./highlighted_pdf.pdf")
-
-            if len(responses)>0:
-                st.write(finalAns)
-                pdf_viewer("./highlighted_pdf.pdf")
 
 if __name__ == "__main__":
     main()
