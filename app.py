@@ -29,6 +29,8 @@ from dotenv import load_dotenv
 
 import time
 
+from concurrent.futures import ThreadPoolExecutor
+
 
 load_dotenv()
 
@@ -36,7 +38,6 @@ load_dotenv()
 anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")
 client=anthropic.Anthropic(api_key=anthropic_api_key)
 haiku = "claude-3-haiku-20240307"
-sonnet = "claude-3-sonnet-20240229"
 
 openai_api_key = os.getenv("OPENAI_API_KEY")
 oclient=OpenAI(api_key=openai_api_key)
@@ -72,18 +73,6 @@ def split_pdf(pdf_path, output_folder="./splitPDF"):
                 pdf_writer.write(output_file)
 
 
-def numerical_sort(value):
-    return int(value.split('_')[-1].split('.')[0])
-
-
-def generate_uuid():
-    return str(uuid.uuid4())
-
-
-def save_to_pkl(data, filepath):
-    with open(filepath, 'wb') as f:
-        pickle.dump(data, f)
-
 def load_from_pkl(filepath):
     with open(filepath, 'rb') as f:
         return pickle.load(f)
@@ -107,15 +96,6 @@ def categorize_elements(raw_pdf_elements):
 def get_response_haiku(message):
     response = client.messages.create(
         model=haiku,
-        max_tokens=1024,
-        messages=message
-    )
-    return response.content[0].text
-
-
-def get_response_sonnet(message):
-    response = client.messages.create(
-        model=sonnet,
         max_tokens=1024,
         messages=message
     )
@@ -163,7 +143,7 @@ def pdf_to_images(pdf_path, pagesList):
     for i in pagesList:
         pages = convert_from_path(pdf_path, first_page=i,
         last_page=i,fmt='jpeg', output_file='page', paths_only=True,
-        output_folder="./jpegs", dpi=600)
+        output_folder="./jpegs", dpi=400)
 
 
 def is_variable_defined(var_name):
@@ -173,6 +153,7 @@ def is_variable_defined(var_name):
 def metricDescription(input_metric, input_company):
     response=oclient.chat.completions.create(
         model="gpt-4o",
+        response_format={ "type": "json_object" },
         messages = [
             {
                 "role": "user",
@@ -197,9 +178,10 @@ search_instruction_string: "list of search instruction strings"
     return response.choices[0].message.content
 
 
-def filterChunks(input_metric, input_company, input_year, description, image_path):
+def filterChunks(input_metric, input_company, input_year, description, image_path, tableOCR):
     response=oclient.chat.completions.create(
         model="gpt-4o",
+        response_format={ "type": "json_object" },
         messages = [
             {
                 "role": "user",
@@ -219,13 +201,17 @@ METRIC: {input_metric}
 Description of METRIC: {description}
 COMPANY: {input_company}
 
-Give me numerical information about the METRIC for the company mentioned in the year {input_year} on the basis of the given images of tables from the company's annual report along with the Description of METRIC given.
+Give me numerical information about the METRIC for the COMPANY corresponding to the year {input_year} on the basis of the given images of tables from the company's annual report along with the Description of METRIC given.
+
+I have also performed OCR on the tables in the images so you can refer the below text to know the correct values in the table-
+
+Text from tables OCR: {tableOCR}
                     
 Only give me the numeric information about what is asked and do not return any extra text or information in your response. Give preference to concrete numbers rather than percentages. Make sure your answer is a value that is mentioned in one of the tables and also includes the complete unit and denomination of the value.
 
 If the answer is not present in the images, do not make any assumptions or guesses and return 'METRIC NOT PRESENT' in your reponse.
 
-Return your answer as a simple text that looks like JSON without a ```json prefix in the following format-
+Return your answer in the following JSON format-
 
 {{
 "Response": "Numerical value answer or METRIC NOT PRESENT",
@@ -245,6 +231,7 @@ def choose_response(input_metric, input_company, input_year, description, infere
     print(inferences)
     response=oclient.chat.completions.create(
         model="gpt-4o",
+        response_format={ "type": "json_object" },
         messages = [
             {
                 "role": "user",
@@ -263,7 +250,7 @@ Here are a bunch of responses point-wise that the analyst gave consisting of the
 
 {inferences}
 
-Return the one you think has the most logical reason and is likely to be the correct one considering the table and column it was present in. Do not have any extra text, information or formatting in your response - just return the exact one you think is the correct one. Do not add ```json prefix, I want normal text that looks like this JSON-
+Return the one you think has the most logical reason and is likely to be the correct one considering the table and column it was present in. Just return the exact one you think is the correct one in the following JSON format-
 {{
     "Response": "The exact response which has the correct answer",
     "Point Number": "The point number corresponding to that response in the list of responses given above"
@@ -376,11 +363,7 @@ def main():
 
             input_company_pickle_filename = f"./{input_company}.pkl"
 
-            if not os.path.exists(input_company_pickle_filename):
-                continue
-
-            else:
-                pdf_elements = load_from_pkl(input_company_pickle_filename)
+            pdf_elements = load_from_pkl(input_company_pickle_filename)
 
 
             texts_elements, texts, tables, tables_text = categorize_elements(pdf_elements)
@@ -400,66 +383,16 @@ def main():
             print(f"Time to load pinecone: {elapsed_time} seconds")
 
 
-            if os.path.exists("./tableStorage") and os.path.exists("./tablePage_to_uuid.pkl"):
-                if not is_variable_defined('tableIndex'):
-                    
-                    start_time = time.time()
-                    storage_context_tables = StorageContext.from_defaults(persist_dir="./tableStorage", vector_store=vector_store_tables)
-                    tableIndex = load_index_from_storage(storage_context_tables)
-                    end_time = time.time()
-                    elapsed_time = end_time - start_time
-                    print(f"Time to load pinecone index: {elapsed_time} seconds")
+            start_time = time.time()
+            storage_context_tables = StorageContext.from_defaults(persist_dir="./tableStorage", vector_store=vector_store_tables)
+            tableIndex = load_index_from_storage(storage_context_tables)
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"Time to load pinecone index: {elapsed_time} seconds")
 
-                # if not is_variable_defined('textIndex'):
-                #     storage_context_text = StorageContext.from_defaults(persist_dir="./textStorage")
-                #     textIndex = load_index_from_storage(storage_context_text)
+            tablePage_to_uuid=load_from_pkl("./tablePage_to_uuid.pkl")
 
-                tablePage_to_uuid=load_from_pkl("./tablePage_to_uuid.pkl")
-                # textPage_to_uuid=load_from_pkl("./textPage_to_uuid.pkl")
-
-
-            else:
-                tableNodes = []
-                tablePage_to_uuid = {}
-
-                pc.create_index(
-                    name="tables",
-                    dimension=3072,
-                    metric="dotproduct",
-                    spec=ServerlessSpec(cloud="aws", region="us-east-1"),
-                )
-                pinecone_index_tables = pc.Index("tables")
-                vector_store_tables = PineconeVectorStore(
-                    pinecone_index=pinecone_index_tables,
-                    add_sparse_vector=True,
-                )
-                
-                for index, i in enumerate(tables_text):
-                    if len(i) > 0:
-                        node_id = generate_uuid()
-                        tablePage_to_uuid[node_id] = tables[index].metadata.orig_elements[0].metadata.page_number
-                        tableNodes.append(TextNode(text=i, id_=node_id))
-                
-                save_to_pkl(tablePage_to_uuid, "./tablePage_to_uuid.pkl")
-                storage_context_tables = StorageContext.from_defaults(vector_store=vector_store_tables)
-                tableIndex = VectorStoreIndex(tableNodes, storage_context=storage_context_tables)
-                tableIndex.storage_context.persist(persist_dir="./tableStorage")
-                
-
-                # textNodes=[]
-                # textPage_to_uuid = {}
-                # for index, i in enumerate(texts):
-                #     if len(i)>0:
-                #         node_id = generate_uuid()
-                #         textPage_to_uuid[node_id]=texts_elements[index].metadata.orig_elements[0].metadata.page_number
-                #         textNodes.append(TextNode(text=i, id_=node_id))
-                        
-                # save_to_pkl(textPage_to_uuid,"./textPage_to_uuid.pkl")
-                # storage_context_text = StorageContext.from_defaults(vector_store=vector_store_text)
-                # textIndex=VectorStoreIndex(textNodes, storage_context=storage_context_text)
-                # textIndex.storage_context.persist(persist_dir="./textStorage")
             
-
             start_time = time.time()
             response=get_type(input_metric,input_company,input_sector)
 
@@ -507,32 +440,42 @@ def main():
                 inferences=[]
                 responses=[]
                 reasons=[]
-                for i in os.listdir("./jpegs"):
+                promptArgList=[]
+                print(pages)
+                for index, i in enumerate(os.listdir("./jpegs")):
                     print(i)
+                    tableContext=[]
                     image_path=os.path.join("./jpegs", i)
 
-                    inferencee=filterChunks(input_metric, input_company, input_year, description, image_path)
-                    print(inferencee)
+                    for j in tables:
+                        if j.metadata.orig_elements[0].metadata.page_number==pages[index]:
+                            tableContext.append(str(j))
+                    tableOCR = '\n\n'.join([f"{i+1}. {element}" for i, element in enumerate(tableContext)])
 
-                    while True:
-                        try:
-                            inference=json.loads(inferencee)
-                            response=inference.get('Response')
+                    args=(input_metric, input_company, input_year, description, image_path, tableOCR)
+                    promptArgList.append(args)
 
-                            if 'not' not in response.lower() and len(response)>0:
-                                reason=inference.get('Reason')
+                with ThreadPoolExecutor() as executor:
+                    results=executor.map(lambda args: filterChunks(*args), promptArgList)
+                    for inferencee in results:
+                        while True:
+                            try:
+                                inference=json.loads(inferencee)
+                                response=inference.get('Response')
 
-                                inferences.append(inferencee)
-                                responses.append(add_commas(remove_currency(response)))
-                                reasons.append(reason)
-                            else:
-                                inferences.append(" ")
+                                if 'not' not in response.lower() and len(response)>0:
+                                    reason=inference.get('Reason')
 
-                            break
-                        except json.JSONDecodeError:
-                            print("Error: JSON decoding failed. Retrying...")
-                            inference=filterChunks(input_metric, input_company, input_year, description, image_path)
+                                    inferences.append(inferencee)
+                                    responses.append(add_commas(remove_currency(response)))
+                                    reasons.append(reason)
+                                else:
+                                    inferences.append(" ")
 
+                                break
+                            except json.JSONDecodeError:
+                                print("Error: JSON decoding failed. Retrying...")
+                                inferencee=filterChunks(input_metric, input_company, input_year, description, image_path)
 
                 if len(responses)==0:
                     st.write("Metric not present in the report.")
@@ -547,7 +490,7 @@ def main():
                     inferences_numbered_list = "\n\n".join(f"{i+1}. {inference}" for i, inference in enumerate(inferences) if inference!=" ")
                     answerr=choose_response(input_metric, input_company, input_year, description, inferences_numbered_list)
                     print(answerr)
-
+                
                     while True:
                         try:
                             answer=json.loads(answerr)
