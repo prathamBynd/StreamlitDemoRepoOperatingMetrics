@@ -309,24 +309,18 @@ def highlight_text(pdf_path, page_number, pages, text_to_highlight):
             print("Invalid page number.")
             return
 
-        # Extract the text from the specified page
-        page_text = pdf_reader.pages[page_number - 1].extract_text()
-
         # Open the PDF using PyMuPDF
         doc = fitz.open(pdf_path)
 
         # Get the page
         page = doc.load_page(page_number - 1)
-
-        page_text = page.get_text()
+        print(page)
 
         # Search for the matched text and highlight it
-        text_instances = page.search_for(text_to_highlight)
+        text_instances = page.search_for(f" {text_to_highlight} ")
 
         if len(text_instances)==0:
             continue 
-
-        valid_instances = []
 
         for inst in text_instances:
             highlight = page.add_highlight_annot(inst)
@@ -454,7 +448,6 @@ def main():
 
                 for index, i in enumerate(sorted_files):
                     print(i)
-                    st.write(i)
                     tableContext=[]
                     image_path=os.path.join("./jpegs", i)
 
