@@ -178,6 +178,10 @@ search_instruction_string: "list of search instruction strings"
     return response.choices[0].message.content
 
 
+def extract_number(filename):
+    return int(filename.split('-')[1].split('.')[0])
+
+
 def filterChunks(input_metric, input_company, input_year, description, image_path, tableOCR):
     response=oclient.chat.completions.create(
         model="gpt-4o",
@@ -441,8 +445,14 @@ def main():
                 responses=[]
                 reasons=[]
                 promptArgList=[]
+                file_list = []
                 print(pages)
-                for index, i in enumerate(os.listdir("./jpegs")):
+                for filename in os.listdir("./jpegs"):
+                    if filename.endswith('.jpg'):
+                        file_list.append(filename)
+                sorted_files = sorted(file_list, key=extract_number)
+
+                for index, i in enumerate(file_list):
                     print(i)
                     tableContext=[]
                     image_path=os.path.join("./jpegs", i)
