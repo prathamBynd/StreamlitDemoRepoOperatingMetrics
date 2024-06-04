@@ -314,13 +314,18 @@ def highlight_text(pdf_path, page_number, pages, text_to_highlight):
 
         # Get the page
         page = doc.load_page(page_number - 1)
-        print(page)
 
         # Search for the matched text and highlight it
         text_instances = page.search_for(f" {text_to_highlight} ")
 
         if len(text_instances)==0:
-            continue 
+            text_instances = page.search_for(f" {text_to_highlight}")
+            if len(text_instances)==0:
+                text_instances = page.search_for(f"{text_to_highlight} ")
+                if len(text_instances)==0:
+                    text_instances = page.search_for(f"{text_to_highlight}")
+                    if len(text_instances)==0:
+                        continue
 
         for inst in text_instances:
             highlight = page.add_highlight_annot(inst)
@@ -462,6 +467,7 @@ def main():
                 with ThreadPoolExecutor() as executor:
                     results=executor.map(lambda args: filterChunks(*args), promptArgList)
                     for inferencee in results:
+                        print(inferencee)
                         while True:
                             try:
                                 inference=json.loads(inferencee)
