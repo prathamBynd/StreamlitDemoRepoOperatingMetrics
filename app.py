@@ -452,7 +452,7 @@ def main():
                         file_list.append(filename)
                 sorted_files = sorted(file_list, key=extract_number)
 
-                for index, i in enumerate(file_list):
+                for index, i in enumerate(sorted_files):
                     print(i)
                     st.write(i)
                     tableContext=[]
