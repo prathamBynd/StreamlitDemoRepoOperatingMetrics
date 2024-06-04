@@ -440,7 +440,7 @@ def main():
                 elapsed_time = end_time - start_time
                 print(f"Time to convert chunks to page images: {elapsed_time} seconds")
 
-
+                start_time = time.time()
                 inferences=[]
                 responses=[]
                 reasons=[]
@@ -454,6 +454,7 @@ def main():
 
                 for index, i in enumerate(file_list):
                     print(i)
+                    st.write(i)
                     tableContext=[]
                     image_path=os.path.join("./jpegs", i)
 
@@ -486,7 +487,11 @@ def main():
                             except json.JSONDecodeError:
                                 print("Error: JSON decoding failed. Retrying...")
                                 inferencee=filterChunks(input_metric, input_company, input_year, description, image_path)
+                end_time = time.time()
+                elapsed_time = end_time - start_time
+                print(f"Time to parallel process pages: {elapsed_time} seconds")
 
+                start_time = time.time()
                 if len(responses)==0:
                     st.write("Metric not present in the report.")
                 elif len(set(responses))==1:
@@ -520,7 +525,9 @@ def main():
                     highlight_text(input_pdf, page_number, pages, highlightText)
                 
                 source="table"
-
+                end_time = time.time()
+                elapsed_time = end_time - start_time
+                print(f"Time to get final answer and highlighting: {elapsed_time} seconds")
 
             if len(responses)>0:
                 st.write(finalAns)
@@ -531,6 +538,7 @@ def main():
                 shutil.rmtree("./jpegs")
             if os.path.exists("./highlighted_pdf.pdf"):
                 os.remove("./highlighted_pdf.pdf")
+            
 
 if __name__ == "__main__":
     main()
