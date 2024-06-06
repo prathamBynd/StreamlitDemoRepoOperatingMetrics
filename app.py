@@ -14,7 +14,7 @@ import pickle
 import fitz 
 from pdf2image import convert_from_path
 
-from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage, Settings
+from llama_index.core import StorageContext, load_index_from_storage, Settings
 from llama_index.core.retrievers import VectorIndexRetriever
 from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
@@ -91,6 +91,16 @@ def categorize_elements(raw_pdf_elements):
             table_elements.append(element)
             table_data.append(str(element))
     return text_elements, text_data, table_elements, table_data
+
+
+def retrieve_chunks(indexName, retrievalNumber, input_metric, dictionaryType):
+    retrieverTables = VectorIndexRetriever(index=indexName, similarity_top_k=retrievalNumber, sparse_top_k=7, query_mode="hybrid")
+
+    retrievedNodesTables = retrieverTables.retrieve(f"{input_metric}")
+
+    pages = {dictionaryType[node.node.id_] for node in retrievedNodesTables if node.node.id_ in dictionaryType}
+
+    return pages
 
 
 def get_response_haiku(message):
@@ -182,7 +192,7 @@ def extract_number(filename):
     return int(filename.split('-')[1].split('.')[0])
 
 
-def filterChunks(input_metric, input_company, input_year, description, image_path, tableOCR):
+def filterChunks(input_metric, input_company, input_year, description, image_path, OCR):
     response=oclient.chat.completions.create(
         model="gpt-4o",
         response_format={ "type": "json_object" },
@@ -207,9 +217,9 @@ COMPANY: {input_company}
 
 Give me numerical information about the METRIC for the COMPANY corresponding to the year {input_year} on the basis of the given images of tables from the company's annual report along with the Description of METRIC given.
 
-I have also performed OCR on the tables in the images so you can refer the below text to know the correct values in the table-
+I have also performed OCR on the relevant section of the page so you can refer the below text to know the correct text in case unclear in the image-
 
-Text from tables OCR: {tableOCR}
+Text from relevant sections in the page: {OCR}
                     
 Only give me the numeric information about what is asked and do not return any extra text or information in your response. Give preference to concrete numbers rather than percentages. Make sure your answer is a value that is mentioned in one of the tables and also includes the complete unit and denomination of the value.
 
@@ -354,8 +364,9 @@ def main():
 
     # Run the function if a metric is entered
     if input_metric and input_year:
+        input_metric=input_metric.title()
         results=[]
-        source=""
+        source="table"
 
         for i in range(len(pdfList)):
             input_company=companyList[i]
@@ -377,8 +388,13 @@ def main():
             pc = Pinecone(api_key=pinecone_api_key)
 
             pinecone_index_tables = pc.Index("tables")
+            pinecone_index_text = pc.Index("text")
             vector_store_tables = PineconeVectorStore(
                 pinecone_index=pinecone_index_tables,
+                add_sparse_vector=True,
+            )
+            vector_store_text = PineconeVectorStore(
+                pinecone_index=pinecone_index_text,
                 add_sparse_vector=True,
             )
             end_time = time.time()
@@ -388,12 +404,15 @@ def main():
 
             start_time = time.time()
             storage_context_tables = StorageContext.from_defaults(persist_dir="./tableStorage", vector_store=vector_store_tables)
+            storage_context_text = StorageContext.from_defaults(persist_dir="./textStorage", vector_store=vector_store_text)
             tableIndex = load_index_from_storage(storage_context_tables)
+            textIndex = load_index_from_storage(storage_context_text)
             end_time = time.time()
             elapsed_time = end_time - start_time
             print(f"Time to load pinecone index: {elapsed_time} seconds")
 
             tablePage_to_uuid=load_from_pkl("./tablePage_to_uuid.pkl")
+            textPage_to_uuid=load_from_pkl("./textPage_to_uuid.pkl")
 
             
             start_time = time.time()
@@ -422,16 +441,24 @@ def main():
 
 
                 start_time = time.time()
-                retriever = VectorIndexRetriever(index=tableIndex, similarity_top_k=10, sparse_top_k=7, query_mode="hybrid")
+                retrieverTables = VectorIndexRetriever(index=tableIndex, similarity_top_k=10, sparse_top_k=7, query_mode="hybrid")
+                retrieverText = VectorIndexRetriever(index=textIndex, similarity_top_k=5, sparse_top_k=7, query_mode="hybrid")
 
-                retrievedNodes = retriever.retrieve(f"{input_metric}")
+                retrievedNodesTables = retrieverTables.retrieve(f"{input_metric}")
+                retrievedNodesText = retrieverText.retrieve(f"{input_metric}")
                 end_time = time.time()
                 elapsed_time = end_time - start_time
                 print(f"Time to retrieve chunks: {elapsed_time} seconds")
 
 
                 start_time = time.time()
-                pages = {tablePage_to_uuid[node.node.id_] for node in retrievedNodes if node.node.id_ in tablePage_to_uuid}
+                pages=set()
+                chunkArgList=[(tableIndex, 10, input_metric, tablePage_to_uuid), (textIndex, 5, input_metric, textPage_to_uuid)]
+                with ThreadPoolExecutor() as executor:
+                    results=executor.map(lambda args: retrieve_chunks(*args), chunkArgList)
+                for x in results:
+                    for y in x:
+                        pages.add(y)
                 pages=list(pages)
                 pages.sort()
                 pdf_to_images(input_pdf, pages)
@@ -453,15 +480,18 @@ def main():
 
                 for index, i in enumerate(sorted_files):
                     print(i)
-                    tableContext=[]
+                    context=[]
                     image_path=os.path.join("./jpegs", i)
 
                     for j in tables:
                         if j.metadata.orig_elements[0].metadata.page_number==pages[index]:
-                            tableContext.append(str(j))
-                    tableOCR = '\n\n'.join([f"{i+1}. {element}" for i, element in enumerate(tableContext)])
+                            context.append(str(j))
+                    for j in texts_elements:
+                        if j.metadata.orig_elements[0].metadata.page_number==pages[index]:
+                            context.append(str(j))
+                    OCR = '\n\n'.join([f"{i+1}. {element}" for i, element in enumerate(context)])
 
-                    args=(input_metric, input_company, input_year, description, image_path, tableOCR)
+                    args=(input_metric, input_company, input_year, description, image_path, OCR)
                     promptArgList.append(args)
 
                 with ThreadPoolExecutor() as executor:
@@ -473,7 +503,7 @@ def main():
                                 inference=json.loads(inferencee)
                                 response=inference.get('Response')
 
-                                if 'not' not in response.lower() and len(response)>0:
+                                if 'not' not in (str(response).lower()) and len(response)>0:
                                     reason=inference.get('Reason')
 
                                     inferences.append(inferencee)
@@ -522,8 +552,8 @@ def main():
 
                     print(highlightText)
                     highlight_text(input_pdf, page_number, pages, highlightText)
+
                 
-                source="table"
                 end_time = time.time()
                 elapsed_time = end_time - start_time
                 print(f"Time to get final answer and highlighting: {elapsed_time} seconds")
