@@ -115,37 +115,36 @@ def chunkReport(reportPath, tickerName, year):
 
     container_client = blob_service_client.get_container_client(container_name)
     
-    # split_pdf(reportPath)
+    split_pdf(reportPath)
     
-    # for pageNo, j in enumerate(sorted(os.listdir("splitPDF"), key=numerical_sort)):
-    #     try:
-    #         pdf_elements_temp = partition_pdf(
-    #             f"splitPDF/{j}",
-    #             strategy="hi_res",
-    #             chunking_strategy="by_title",
-    #             extract_images_in_pdf=True,
-    #             extract_image_block_types=["Image", "Table"],
-    #             extract_image_block_output_dir=f"images/{pageNo+1}",
-    #             infer_table_structure=True,
-    #             max_characters=3000,
-    #             new_after_n_chars=2800,
-    #             combine_text_under_n_chars=2000
-    #         )
+    for pageNo, j in enumerate(sorted(os.listdir("splitPDF"), key=numerical_sort)):
+        try:
+            pdf_elements_temp = partition_pdf(
+                f"splitPDF/{j}",
+                strategy="hi_res",
+                chunking_strategy="by_title",
+                extract_images_in_pdf=True,
+                extract_image_block_types=["Image", "Table"],
+                extract_image_block_output_dir=f"images/{pageNo+1}",
+                infer_table_structure=True,
+                max_characters=3000,
+                new_after_n_chars=2800,
+                combine_text_under_n_chars=2000
+            )
 
-    #     except Exception as e:
-    #         print(f"Error processing page {pageNo + 1}: {e}")
-    #         continue
+        except Exception as e:
+            print(f"Error processing page {pageNo + 1}: {e}")
+            continue
 
-    #     for element in pdf_elements_temp:
-    #         try:
-    #             element.metadata.orig_elements[0].metadata.page_number = pageNo+ 1
-    #         except AttributeError as e:
-    #             print(f"Error setting page number for element: {e}")
-    #             continue
+        for element in pdf_elements_temp:
+            try:
+                element.metadata.orig_elements[0].metadata.page_number = pageNo+ 1
+            except AttributeError as e:
+                print(f"Error setting page number for element: {e}")
+                continue
 
-    #     pdf_elements+=pdf_elements_temp
+        pdf_elements+=pdf_elements_temp
 
-    pdf_elements=load_from_pkl("Aadhar Housing Finance.pkl")
     texts, tables = categorize_elements(pdf_elements)
 
 
