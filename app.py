@@ -558,10 +558,10 @@ def main():
                 elapsed_time = end_time - start_time
                 print(f"Time to get final answer and highlighting: {elapsed_time} seconds")
 
-            if len(responses)>0:
-                st.write(finalAns)
-                if os.path.exists("./highlighted_pdf.pdf"):
-                    pdf_viewer("./highlighted_pdf.pdf")
+                if len(responses)>0:
+                    st.write(finalAns)
+                    if os.path.exists("./highlighted_pdf.pdf"):
+                        pdf_viewer("./highlighted_pdf.pdf")
 
             if os.path.exists("./jpegs"):
                 shutil.rmtree("./jpegs")
