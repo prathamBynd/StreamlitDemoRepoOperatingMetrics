@@ -1,3 +1,6 @@
+from unstructured.partition.pdf import partition_pdf
+import PyPDF2
+from PyPDF2 import PdfReader, PdfWriter
 from azure.storage.blob import BlobServiceClient
 from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage, Settings
 from llama_index.core.retrievers import VectorIndexRetriever
@@ -5,12 +8,18 @@ from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.schema import TextNode
 from llama_index.vector_stores.pinecone import PineconeVectorStore
+from llama_index.core.vector_stores import (
+    MetadataFilter,
+    MetadataFilters,
+    FilterOperator,
+)
 from pinecone import Pinecone, ServerlessSpec
 from openai import OpenAI
 from dotenv import load_dotenv
 import json
 import uuid
 import pickle
+import shutil
 import os
 
 
@@ -108,6 +117,9 @@ def generate_uuid():
 
 
 def chunkReport(reportPath, tickerName, year):
+    if os.path.exists("highlighted_pdf.pdf"):
+        os.remove("highlighted_pdf.pdf")
+        
     connection_string = os.getenv("AZURE_CONNECTION_STRING")
     container_name = os.getenv("AZURE_CONTAINER_NAME")
 
@@ -117,15 +129,12 @@ def chunkReport(reportPath, tickerName, year):
     
     split_pdf(reportPath)
     
+    pdf_elements=[]
     for pageNo, j in enumerate(sorted(os.listdir("splitPDF"), key=numerical_sort)):
         try:
             pdf_elements_temp = partition_pdf(
                 f"splitPDF/{j}",
-                strategy="hi_res",
                 chunking_strategy="by_title",
-                extract_images_in_pdf=True,
-                extract_image_block_types=["Image", "Table"],
-                extract_image_block_output_dir=f"images/{pageNo+1}",
                 infer_table_structure=True,
                 max_characters=3000,
                 new_after_n_chars=2800,
@@ -144,6 +153,7 @@ def chunkReport(reportPath, tickerName, year):
                 continue
 
         pdf_elements+=pdf_elements_temp
+        print(f"Chunked page: {pageNo + 1}")
 
     texts, tables = categorize_elements(pdf_elements)
 
@@ -166,21 +176,21 @@ def chunkReport(reportPath, tickerName, year):
 
     Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-large", api_key=openai_api_key)
     
-    pc.create_index(
-        name=f"{tickerName.lower()}-text-{year}",
-        dimension=3072,
-        metric="dotproduct",
-        spec=ServerlessSpec(cloud="aws", region="us-east-1"),
-    )
-    pc.create_index(
-        name=f"{tickerName.lower()}-tables-{year}",
-        dimension=3072,
-        metric="dotproduct",
-        spec=ServerlessSpec(cloud="aws", region="us-east-1"),
-    )
+    # pc.create_index(
+    #     name="text",
+    #     dimension=3072,
+    #     metric="dotproduct",
+    #     spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+    # )
+    # pc.create_index(
+    #     name=f"tables",
+    #     dimension=3072,
+    #     metric="dotproduct",
+    #     spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+    # )
 
-    pinecone_index_text = pc.Index(f"{tickerName.lower()}-text-{year}")
-    pinecone_index_tables = pc.Index(f"{tickerName.lower()}-tables-{year}")
+    pinecone_index_text = pc.Index("text")
+    pinecone_index_tables = pc.Index("tables")
 
     vector_store_text = PineconeVectorStore(
         pinecone_index=pinecone_index_text,
@@ -200,7 +210,7 @@ def chunkReport(reportPath, tickerName, year):
         if len(i)>0:
             node_id = generate_uuid()
             textPage_to_uuid[node_id]=text_page[index]
-            textNodes.append(TextNode(text=i, id_=node_id))
+            textNodes.append(TextNode(text=i, id_=node_id, metadata={"company": tickerName, "year": year}))
             
     save_to_pkl(textPage_to_uuid,"textPage_to_uuid.pkl")
     textIndex=VectorStoreIndex(textNodes, storage_context=storage_context_text)
@@ -212,7 +222,7 @@ def chunkReport(reportPath, tickerName, year):
         if len(i)>0:
             node_id = generate_uuid()
             tablePage_to_uuid[node_id]=table_page[index]
-            tableNodes.append(TextNode(text=i, id_=node_id))
+            tableNodes.append(TextNode(text=i, id_=node_id, metadata={"company": tickerName, "year": year}))
             
     save_to_pkl(tablePage_to_uuid,"tablePage_to_uuid.pkl")
     tableIndex=VectorStoreIndex(tableNodes, storage_context=storage_context_tables)
@@ -223,7 +233,7 @@ def chunkReport(reportPath, tickerName, year):
     with open("TableChunks.json", "rb") as data:
         blob_client.upload_blob(data)
     blob_client = container_client.get_blob_client(f"{tickerName}/Annual_Reports_Structured/{year}/TextChunks.json")
-    with open("TableChunks.json", "rb") as data:
+    with open("TextChunks.json", "rb") as data:
         blob_client.upload_blob(data)
 
     blob_client = container_client.get_blob_client(f"{tickerName}/Annual_Reports_Structured/{year}/UUIDDictionaries/tablePage_to_uuid.pkl")
@@ -236,5 +246,7 @@ def chunkReport(reportPath, tickerName, year):
     upload_folder_to_blob(container_client, "tableStorage", f"{tickerName}/Annual_Reports_Structured/{year}/Vector Store Index/tableStorage")
     upload_folder_to_blob(container_client, "textStorage", f"{tickerName}/Annual_Reports_Structured/{year}/Vector Store Index/textStorage")
 
+    shutil.rmtree("splitPDF")
+
 if __name__ == "__main__":
-    chunkReport("AadharHousingFinanceAnnualReport.pdf", "AADHARHousinggg", "2023")
+    chunkReport("./reports/TCS_ar_2023.pdf", "TCS", "2023")

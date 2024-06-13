@@ -17,6 +17,11 @@ from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.schema import TextNode
 from llama_index.vector_stores.pinecone import PineconeVectorStore
+from llama_index.core.vector_stores import (
+    MetadataFilter,
+    MetadataFilters,
+    FilterOperator,
+)
 
 from pinecone import Pinecone, ServerlessSpec
 
@@ -313,6 +318,38 @@ def add_commas(number_str):
         raise ValueError("Input must be a number that can be converted to a float or int")
 
 
+def convert_to_indian_system(number_str):
+    # Remove existing commas and split the string into integer and decimal parts
+    if '.' in number_str:
+        integer_part, decimal_part = number_str.split('.')
+    else:
+        integer_part, decimal_part = number_str, None
+
+    # Remove existing commas from the integer part
+    integer_part = integer_part.replace(',', '')
+
+    # Reverse the integer part to process from the least significant digit
+    reversed_integer = integer_part[::-1]
+
+    # Apply the Indian numbering system comma placement
+    indian_reversed = ''
+    for i in range(len(reversed_integer)):
+        if i > 2 and (i - 1) % 2 == 0:
+            indian_reversed += ','
+        indian_reversed += reversed_integer[i]
+
+    # Reverse back to the original order
+    indian_integer = indian_reversed[::-1]
+
+    # Combine integer and decimal parts if there's a decimal part
+    if decimal_part:
+        result = indian_integer + '.' + decimal_part
+    else:
+        result = indian_integer
+
+    return result
+
+
 def highlight_text(pdf_path, page_number, pages, text_to_highlight):
     pages.insert(0,page_number)
 
@@ -412,8 +449,8 @@ def get_answer(tickerName, companySector, input_metric, input_year):
 
     pc = Pinecone(api_key=pinecone_api_key)
 
-    pinecone_index_tables = pc.Index(f"{tickerName.lower()}-tables-{input_year}")
-    pinecone_index_text = pc.Index(f"{tickerName.lower()}-text-{input_year}")
+    pinecone_index_tables = pc.Index("tables")
+    pinecone_index_text = pc.Index("text")
     vector_store_tables = PineconeVectorStore(
         pinecone_index=pinecone_index_tables,
         add_sparse_vector=True,
@@ -466,14 +503,25 @@ def get_answer(tickerName, companySector, input_metric, input_year):
 
 
         start_time = time.time()
-        retrieverTables = VectorIndexRetriever(index=tableIndex, similarity_top_k=10, sparse_top_k=7, query_mode="hybrid")
-        retrieverText = VectorIndexRetriever(index=textIndex, similarity_top_k=5, sparse_top_k=7, query_mode="hybrid")
+        filters = MetadataFilters(
+            filters=[
+                MetadataFilter(
+                    key="company", operator=FilterOperator.EQ, value=input_company
+                ),
+                MetadataFilter(
+                    key="year", operator=FilterOperator.EQ, value=input_year
+                ),
+            ]
+        )
+        retrieverTables = VectorIndexRetriever(index=tableIndex, similarity_top_k=10, sparse_top_k=7, query_mode="hybrid", filters=filters)
+        retrieverText = VectorIndexRetriever(index=textIndex, similarity_top_k=5, sparse_top_k=7, query_mode="hybrid", filters=filters)
 
         retrievedNodesTables = retrieverTables.retrieve(f"{input_metric}")
         retrievedNodesText = retrieverText.retrieve(f"{input_metric}")
         end_time = time.time()
         elapsed_time = end_time - start_time
         print(f"Time to retrieve chunks: {elapsed_time} seconds")
+        print(f"Retrieved Chunks: {len(retrievedNodesTables) +len(retrievedNodesText)}")
 
 
         start_time = time.time()
@@ -546,6 +594,7 @@ def get_answer(tickerName, companySector, input_metric, input_year):
         print(f"Time to parallel process pages: {elapsed_time} seconds")
 
         start_time = time.time()
+        finalInferences = []
         if len(responses)==0:
             finalAns="Metric not present in the report."
         elif len(set(responses))==1:
@@ -554,6 +603,9 @@ def get_answer(tickerName, companySector, input_metric, input_year):
             for i in range(len(inferences)):
                 if inferences[i]!=" ":
                     highlight_text(input_pdf, pages[i], pages, finalAns)
+                    print(convert_to_indian_system(finalAns))
+                    if not os.path.exists("highlighted_pdf.pdf"):
+                        highlight_text(input_pdf, pages[i], pages, convert_to_indian_system(finalAns))
                     break
         else:
             inferences_numbered_list = "\n\n".join(f"{i+1}. {inference}" for i, inference in enumerate(inferences) if inference!=" ")
@@ -575,8 +627,14 @@ def get_answer(tickerName, companySector, input_metric, input_year):
                     print("Error: JSON decoding failed. Retrying...")
                     answer=choose_response(input_metric, input_company, input_year, description, inferences_numbered_list)
 
+            for i in inferences:
+                if i !=" ":
+                    if answerr not in i:
+                        finalInferences.append(i)
             print(highlightText)
             highlight_text(input_pdf, page_number, pages, highlightText)
+            if not os.path.exists("highlighted_pdf.pdf"):
+                highlight_text(input_pdf, page_number, pages, convert_to_indian_system(highlightText))
 
         
         end_time = time.time()
@@ -587,15 +645,12 @@ def get_answer(tickerName, companySector, input_metric, input_year):
     if os.path.exists("./jpegs"):
         shutil.rmtree("./jpegs")
 
-    finalInferences = []
-    for i in inferences:
-        if i !=" ":
-            if answerr not in i:
-                finalInferences.append(i)
-
 
     return finalAns, finalInferences
 
 
 if __name__ == "__main__":
-    print(get_answer("AADHARHousinggg", "Finance service commercial", "salaried borrowers", "2023"))
+    finalAns, finalInferences=get_answer("RELIANCE", "Multinational conglomerate", "number of employees", "2021")
+
+    print(finalAns)
+    print(finalInferences)
