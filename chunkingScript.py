@@ -8,11 +8,6 @@ from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.schema import TextNode
 from llama_index.vector_stores.pinecone import PineconeVectorStore
-from llama_index.core.vector_stores import (
-    MetadataFilter,
-    MetadataFilters,
-    FilterOperator,
-)
 from pinecone import Pinecone, ServerlessSpec
 from openai import OpenAI
 from dotenv import load_dotenv

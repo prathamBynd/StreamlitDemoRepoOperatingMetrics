@@ -1,402 +1,35 @@
-import PyPDF2
-from PyPDF2 import PdfReader, PdfWriter
-import anthropic
+import os
 import shutil
 import base64
 import uuid
-import os
 import re
 import json
 import pickle
-import fitz 
-from pdf2image import convert_from_path
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+from pinecone import Pinecone, ServerlessSpec
+from dotenv import load_dotenv
+from azure.storage.blob import BlobServiceClient
 
 from llama_index.core import StorageContext, load_index_from_storage, Settings
 from llama_index.core.retrievers import VectorIndexRetriever
-from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.core.schema import TextNode
 from llama_index.vector_stores.pinecone import PineconeVectorStore
-from llama_index.core.vector_stores import (
-    MetadataFilter,
-    MetadataFilters,
-    FilterOperator,
-)
+from llama_index.core.vector_stores import MetadataFilter, MetadataFilters, FilterOperator
 
-from pinecone import Pinecone, ServerlessSpec
-
-from openai import OpenAI
-
-from dotenv import load_dotenv
-
-import time
-
-from concurrent.futures import ThreadPoolExecutor
-
-from azure.storage.blob import BlobServiceClient
+from helperFunctions import download_blob_folder, load_from_pkl, retrieve_chunks, encode_image, pdf_to_images, extract_number, remove_currency, add_commas, convert_to_indian_system, highlight_text
+from inferenceFunctions import get_response_haiku, get_type, metricDescription, filterChunks, choose_response
 
 
 load_dotenv()
 
-
-anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")
-client=anthropic.Anthropic(api_key=anthropic_api_key)
-haiku = "claude-3-haiku-20240307"
-
 openai_api_key = os.getenv("OPENAI_API_KEY")
-oclient=OpenAI(api_key=openai_api_key)
 
 pinecone_api_key=os.getenv("PINECONE_API_KEY")
 
 connection_string = os.getenv("AZURE_CONNECTION_STRING")
 container_name = os.getenv("AZURE_CONTAINER_NAME")
-
-
-def download_blob_folder(blob_folder_path, local_folder_name, connection_string=connection_string, container_name=container_name):
-    # Create a BlobServiceClient object using the connection string
-    blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-
-    # Get a container client
-    container_client = blob_service_client.get_container_client(container_name)
-
-    # List blobs in the specified folder
-    blob_list = container_client.list_blobs(name_starts_with=blob_folder_path)
-    
-    if not os.path.exists(local_folder_name):
-        os.makedirs(local_folder_name)
-
-    # Download each blob
-    for blob in blob_list:
-        # Get the blob name relative to the folder
-        relative_path = blob.name[len(blob_folder_path) + 1:]
-        # Create the local path
-        local_path = os.path.join(local_folder_name, relative_path)
-        
-        # Create local directories if they don't exist
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        
-        # Get a blob client for the blob you want to download
-        blob_client = container_client.get_blob_client(blob.name)
-        
-        # Download the blob to a local file
-        with open(local_path, "wb") as download_file:
-            download_file.write(blob_client.download_blob().readall())
-
-
-def load_from_pkl(filepath):
-    with open(filepath, 'rb') as f:
-        return pickle.load(f)
-
-
-def categorize_elements(raw_pdf_elements):
-    text_elements=[]
-    text_data = []
-    table_elements = []
-    table_data=[]
-    for element in raw_pdf_elements:
-        if 'CompositeElement' in str(type(element)):
-            text_elements.append(element)
-            text_data.append(str(element))
-        elif 'Table' in str(type(element)):
-            table_elements.append(element)
-            table_data.append(str(element))
-    return text_elements, text_data, table_elements, table_data
-
-
-def retrieve_chunks(indexName, retrievalNumber, input_metric, dictionaryType):
-    retrieverTables = VectorIndexRetriever(index=indexName, similarity_top_k=retrievalNumber, sparse_top_k=7, query_mode="hybrid")
-
-    retrievedNodesTables = retrieverTables.retrieve(f"{input_metric}")
-
-    pages = {dictionaryType[node.node.id_] for node in retrievedNodesTables if node.node.id_ in dictionaryType}
-
-    return pages
-
-
-def get_response_haiku(message):
-    response = client.messages.create(
-        model=haiku,
-        max_tokens=1024,
-        messages=message
-    )
-    return response.content[0].text
-
-
-def encode_image(image_path):
-  with open(image_path, "rb") as image_file:
-    return base64.b64encode(image_file.read()).decode('utf-8')
-
-
-def get_type(input_metric,input_company,input_sector):
-    messages=[
-    {
-        "role": "user",
-        "content": [
-        {"type": "text", "text": f'''You are provided with the following user query whose answer can be found in the annual report of a publicly listed company:
-
-        User Query: {input_metric}
-        Company Name: {input_company}
-        Sector of the Company: {input_sector}
-        
-        Based on the query, tell whether the user is asking for a QUALITATIVE answer or a QUANTITATIVE answer.
-        
-        Return only 'QUALITATIVE' or 'QUANTITATIVE' in your answer with no extra text or information.
-        
-        Give your response in the following JSON schema:-
-
-        {{
-            "Response": ""
-        }}'''}
-        ],
-    }
-    ]
-
-    response=get_response_haiku(messages)
-
-    return response
-
-
-def pdf_to_images(pdf_path, pagesList):
-
-    os.makedirs("./jpegs", exist_ok=True)
-
-    for i in pagesList:
-        pages = convert_from_path(pdf_path, first_page=i,
-        last_page=i,fmt='jpeg', output_file='page', paths_only=True,
-        output_folder="./jpegs", dpi=400)
-
-
-def is_variable_defined(var_name):
-    return var_name in globals() or var_name in locals()
-
-
-def metricDescription(input_metric, input_company):
-    response=oclient.chat.completions.create(
-        model="gpt-4o",
-        response_format={ "type": "json_object" },
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text":  f'''Give me a concise but useful explanation of the following metric - "{input_metric}". Include some common ways in which this might be mentioned as well. This description is going to be used to search for the metric in an annual report for "{input_company}" company.
-                        
-Give me the output in JSON format with following fields - 
-{{
-metric_description: "Description",
-common_mentions: "list of common mentions",
-search_instruction_string: "list of search instruction strings"
-}}'''
-                    },
-                ],
-            }
-        ],
-            max_tokens=300
-    )
-
-    return response.choices[0].message.content
-
-
-def extract_number(filename):
-    return int(filename.split('-')[1].split('.')[0])
-
-
-def filterChunks(input_metric, input_company, input_year, description, image_path, OCR):
-    response=oclient.chat.completions.create(
-        model="gpt-4o",
-        response_format={ "type": "json_object" },
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url":  {
-                            "type": "base64",
-                            "url": f"data:image/jpeg;base64,{encode_image(image_path)}",
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text":  f'''You have been provided a METRIC, Description of METRIC and a COMPANY name below-
-                        
-METRIC: {input_metric}
-Description of METRIC: {description}
-COMPANY: {input_company}
-
-Give me numerical information about the METRIC for the COMPANY corresponding to the year {input_year} on the basis of the given images of tables from the company's annual report along with the Description of METRIC given.
-
-I have also performed OCR on the relevant section of the page so you can refer the below text to know the correct text in case unclear in the image-
-
-Text from relevant sections in the page: {OCR}
-                    
-Only give me the numeric information about what is asked and do not return any extra text or information in your response. Give preference to concrete numbers rather than percentages. Make sure your answer is a value that is mentioned in one of the tables and also includes the complete unit and denomination of the value.
-
-If the answer is not present in the images, do not make any assumptions or guesses and return 'METRIC NOT PRESENT' in your reponse.
-
-Return your answer in the following JSON format-
-
-{{
-"Response": "Numerical value answer or METRIC NOT PRESENT",
-"Reason": "Reason why you thought this number was the answer by mentioning along with the table, column it was present in along with the heading given to the table telling what it is about"
-}}'''
-                    },
-                ],
-            }
-        ],
-            max_tokens=300
-    )
-
-    return response.choices[0].message.content
-
-# What is the value of for the following metric for {company name}?
-
-# Metric Name -
-def choose_response(input_metric, input_company, input_year, description, inferences):
-    print(inferences)
-    response=oclient.chat.completions.create(
-        model="gpt-4o",
-        response_format={ "type": "json_object" },
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text":  f'''A financial analyst has been provided a METRIC, Description of METRIC and a COMPANY name below-
-                        
-METRIC: {input_metric}
-Description of METRIC: {description}
-COMPANY: {input_company}
-
-The analyst was to go through the COMPANY's annual report and give the numerical value corresponding to the METRIC for the year {input_year} along with the reason why they think the value they chose in the report was the correct one.
-
-Here are a bunch of responses point-wise that the analyst gave consisting of the values they chose along with their reasons-
-
-{inferences}
-
-Return the one you think has the most logical reason and is likely to be the correct one considering the table and column it was present in. Just return the exact one you think is the correct one in the following JSON format-
-{{
-    "Response": "The exact response which has the correct answer",
-    "Point Number": "The point number corresponding to that response in the list of responses given above"
-}}'''
-                    },
-                ],
-            }
-        ],
-            max_tokens=300
-    )
-
-    return response.choices[0].message.content
-
-
-def remove_currency(text):
-    # Define regular expression pattern to match currency symbols and text
-    pattern = r'[^\d.]'  # Match any character that is not a digit or comma
-
-    # Remove currency symbols and text
-    cleaned_text = re.sub(pattern, '', text)
-
-    return cleaned_text
-
-
-def add_commas(number_str):
-    try:
-        # Check if the input string contains a decimal point
-        if '.' in number_str:
-            # Convert to float if it has a decimal
-            num = float(number_str)
-        else:
-            # Convert to int if it doesn't have a decimal
-            num = int(number_str)
-        
-        # Format the number with commas and return as a string
-        return f"{num:,}"
-    except ValueError:
-        # Handle the case where the input cannot be converted to a float or int
-        raise ValueError("Input must be a number that can be converted to a float or int")
-
-
-def convert_to_indian_system(number_str):
-    # Remove existing commas and split the string into integer and decimal parts
-    if '.' in number_str:
-        integer_part, decimal_part = number_str.split('.')
-    else:
-        integer_part, decimal_part = number_str, None
-
-    # Remove existing commas from the integer part
-    integer_part = integer_part.replace(',', '')
-
-    # Reverse the integer part to process from the least significant digit
-    reversed_integer = integer_part[::-1]
-
-    # Apply the Indian numbering system comma placement
-    indian_reversed = ''
-    for i in range(len(reversed_integer)):
-        if i > 2 and (i - 1) % 2 == 0:
-            indian_reversed += ','
-        indian_reversed += reversed_integer[i]
-
-    # Reverse back to the original order
-    indian_integer = indian_reversed[::-1]
-
-    # Combine integer and decimal parts if there's a decimal part
-    if decimal_part:
-        result = indian_integer + '.' + decimal_part
-    else:
-        result = indian_integer
-
-    return result
-
-
-def highlight_text(pdf_path, page_number, pages, text_to_highlight):
-    pages.insert(0,page_number)
-
-    for page_number in pages:
-        # Open the PDF file
-        pdf_file = open(pdf_path, 'rb')
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-
-        # Check if the page number is valid
-        if page_number < 1 or page_number > len(pdf_reader.pages):
-            print("Invalid page number.")
-            return
-
-        # Open the PDF using PyMuPDF
-        doc = fitz.open(pdf_path)
-
-        # Get the page
-        page = doc.load_page(page_number - 1)
-
-        # Search for the matched text and highlight it
-        text_instances = page.search_for(f" {text_to_highlight} ")
-
-        if len(text_instances)==0:
-            text_instances = page.search_for(f" {text_to_highlight}")
-            if len(text_instances)==0:
-                text_instances = page.search_for(f"{text_to_highlight} ")
-                if len(text_instances)==0:
-                    text_instances = page.search_for(f"{text_to_highlight}")
-                    if len(text_instances)==0:
-                        continue
-
-        for inst in text_instances:
-            highlight = page.add_highlight_annot(inst)
-
-        for i in range(len(doc) - 1, -1, -1):
-            if i != page_number - 1:
-                doc.delete_page(i)
-
-        # Save the modified PDF with highlights
-        output_pdf_path = './highlighted_pdf.pdf'
-        doc.save(output_pdf_path)
-        doc.close()
-
-        # Close the PDF file
-        pdf_file.close()
-
-        break
 
 
 def get_answer(tickerName, companySector, input_metric, input_year):
@@ -502,7 +135,7 @@ def get_answer(tickerName, companySector, input_metric, input_year):
         print(f"Time to get description: {elapsed_time} seconds") 
 
 
-        start_time = time.time()
+        # start_time = time.time()
         filters = MetadataFilters(
             filters=[
                 MetadataFilter(
@@ -513,20 +146,20 @@ def get_answer(tickerName, companySector, input_metric, input_year):
                 ),
             ]
         )
-        retrieverTables = VectorIndexRetriever(index=tableIndex, similarity_top_k=10, sparse_top_k=7, query_mode="hybrid", filters=filters)
-        retrieverText = VectorIndexRetriever(index=textIndex, similarity_top_k=5, sparse_top_k=7, query_mode="hybrid", filters=filters)
+        # retrieverTables = VectorIndexRetriever(index=tableIndex, similarity_top_k=10, sparse_top_k=7, query_mode="hybrid", filters=filters)
+        # retrieverText = VectorIndexRetriever(index=textIndex, similarity_top_k=5, sparse_top_k=7, query_mode="hybrid", filters=filters)
 
-        retrievedNodesTables = retrieverTables.retrieve(f"{input_metric}")
-        retrievedNodesText = retrieverText.retrieve(f"{input_metric}")
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        print(f"Time to retrieve chunks: {elapsed_time} seconds")
-        print(f"Retrieved Chunks: {len(retrievedNodesTables) +len(retrievedNodesText)}")
+        # retrievedNodesTables = retrieverTables.retrieve(f"{input_metric}")
+        # retrievedNodesText = retrieverText.retrieve(f"{input_metric}")
+        # end_time = time.time()
+        # elapsed_time = end_time - start_time
+        # print(f"Time to retrieve chunks: {elapsed_time} seconds")
+        # print(f"Retrieved Chunks: {len(retrievedNodesTables) +len(retrievedNodesText)}")
 
 
         start_time = time.time()
         pages=set()
-        chunkArgList=[(tableIndex, 10, input_metric, tablePage_to_uuid), (textIndex, 5, input_metric, textPage_to_uuid)]
+        chunkArgList=[(tableIndex, 10, input_metric, tablePage_to_uuid, filters), (textIndex, 5, input_metric, textPage_to_uuid, filters)]
         with ThreadPoolExecutor() as executor:
             results=executor.map(lambda args: retrieve_chunks(*args), chunkArgList)
         for x in results:
