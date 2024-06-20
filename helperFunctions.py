@@ -1,4 +1,5 @@
 import os
+import re
 import pickle
 import base64
 
@@ -32,7 +33,7 @@ def load_from_pkl(filepath):
         return pickle.load(f)
     
     
-def download_blob_folder(blob_folder_path, local_folder_name, connection_string, container_name):
+def download_blob_folder(blob_folder_path, local_folder_name, connection_string=connection_string, container_name=container_name):
     """
     Downloads all blobs from a specified folder in Azure Blob Storage to a local directory.
 

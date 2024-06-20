@@ -1,0 +1,11 @@
+anthropic
+openai
+pinecone
+pinecone-client
+llama-index
+llama-index-vector-stores-pinecone
+PyPDF2
+PyMuPDF
+python-dotenv
+azure-storage-blob
+pdf2image

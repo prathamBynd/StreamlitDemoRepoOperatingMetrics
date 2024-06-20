@@ -3,6 +3,7 @@ from openai import OpenAI
 import anthropic
 from dotenv import load_dotenv
 
+from helperFunctions import encode_image
 
 load_dotenv()
 

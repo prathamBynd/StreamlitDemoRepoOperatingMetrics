@@ -244,4 +244,4 @@ def chunkReport(reportPath, tickerName, year):
     shutil.rmtree("splitPDF")
 
 if __name__ == "__main__":
-    chunkReport("./reports/TCS_ar_2023.pdf", "TCS", "2023")
+    chunkReport("./reports/ABB_ar_2022.pdf", "ABB", "2022")

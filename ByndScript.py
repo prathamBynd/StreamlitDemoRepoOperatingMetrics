@@ -283,7 +283,7 @@ def get_answer(tickerName, companySector, input_metric, input_year):
 
 
 if __name__ == "__main__":
-    finalAns, finalInferences=get_answer("RELIANCE", "Multinational conglomerate", "number of employees", "2021")
+    finalAns, finalInferences=get_answer("ABB", "engineering", "number of employees", "2022")
 
     print(finalAns)
     print(finalInferences)
